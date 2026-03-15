@@ -75,34 +75,6 @@ nidhi-rakshak/
 
 ---
 
-## Installation
-
-Clone the repository:
-
-```
-git clone https://github.com/yourusername/nidhi-rakshak.git
-```
-
-Navigate to the project directory:
-
-```
-cd nidhi-rakshak
-```
-
-Install dependencies:
-
-```
-npm install
-```
-
-Start the development server:
-
-```
-npm start
-```
-
----
-
 ## Future Enhancements
 
 Potential improvements for the application include:
