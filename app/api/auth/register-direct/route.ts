@@ -17,10 +17,22 @@ export async function POST(request: NextRequest) {
   try {
     const { email, password, phone, firstName, lastName, role } = await request.json();
 
+    // Debug: Log environment variables
+    console.log('[v0] Supabase URL:', process.env.NEXT_PUBLIC_SUPABASE_URL);
+    console.log('[v0] Supabase Key available:', !!process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY);
+
     if (!email || !password) {
       return NextResponse.json(
         { error: 'Email and password are required' },
         { status: 400 }
+      );
+    }
+
+    if (!process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+      console.error('[v0] Missing Supabase environment variables');
+      return NextResponse.json(
+        { error: 'Server configuration error. Missing Supabase credentials.' },
+        { status: 500 }
       );
     }
 
