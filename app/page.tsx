@@ -53,6 +53,7 @@ export default function LoginPage() {
 
       router.push('/select-user-type');
     } catch (err) {
+      console.error('[v0] Login fetch error:', err);
       setError('Failed to login. Please try again.');
       setLoading(false);
     }
