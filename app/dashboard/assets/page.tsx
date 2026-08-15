@@ -1,96 +1,184 @@
 'use client';
 
-import React from "react";
-import { useState } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { useRouter } from 'next/navigation';
+import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card } from '@/components/ui/card';
 import { DashboardSidebar } from '@/components/dashboard/sidebar';
 import { Logo } from '@/components/logo';
-import { Trash2, Plus, Menu, ArrowLeft, Wallet } from 'lucide-react';
+import { createClient } from '@/lib/supabase/client';
+import { logActivity } from '@/lib/log-activity';
+import { Trash2, Plus, Menu, ArrowLeft, Wallet, Loader2 } from 'lucide-react';
+
+type AssetType = 'bank_deposits' | 'wallet' | 'crypto' | 'stocks' | 'gold' | 'real_estate';
 
 interface Asset {
   id: string;
-  type: 'bank' | 'wallet' | 'crypto';
-  accountName: string;
-  balance: string;
+  asset_type: AssetType;
+  account_name: string;
+  balance: number;
+  account_number: string | null;
+  institution_name: string | null;
+  description: string | null;
+}
+
+const ASSET_TYPE_OPTIONS: { value: AssetType; label: string; icon: string }[] = [
+  { value: 'bank_deposits', label: 'Bank Account', icon: '🏦' },
+  { value: 'wallet', label: 'Digital Wallet', icon: '👛' },
+  { value: 'crypto', label: 'Cryptocurrency', icon: '₿' },
+  { value: 'stocks', label: 'Stocks', icon: '📈' },
+  { value: 'gold', label: 'Gold', icon: '🪙' },
+  { value: 'real_estate', label: 'Real Estate', icon: '🏠' },
+];
+
+function assetTypeMeta(type: string) {
+  return (
+    ASSET_TYPE_OPTIONS.find((o) => o.value === type) ?? {
+      value: type as AssetType,
+      label: type.replace(/_/g, ' '),
+      icon: '💰',
+    }
+  );
 }
 
 export default function AssetsPage() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [assets, setAssets] = useState<Asset[]>([
-    { id: '1', type: 'bank', accountName: 'Primary Bank Account', balance: '5,00,000' },
-    { id: '2', type: 'wallet', accountName: 'Digital Wallet', balance: '30,000' },
-    { id: '3', type: 'crypto', accountName: 'Bitcoin Holdings', balance: '0.5 BTC' },
-  ]);
+  const [assets, setAssets] = useState<Asset[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
   const [showForm, setShowForm] = useState(false);
-  const [assetType, setAssetType] = useState<'bank' | 'wallet' | 'crypto'>('bank');
+  const [assetType, setAssetType] = useState<AssetType>('bank_deposits');
   const [accountName, setAccountName] = useState('');
   const [balance, setBalance] = useState('');
+  const [institutionName, setInstitutionName] = useState('');
+  const [accountNumber, setAccountNumber] = useState('');
   const router = useRouter();
+  const supabase = createClient();
 
-  const handleAddAsset = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!accountName || !balance) return;
+  useEffect(() => {
+    let active = true;
 
-    const newAsset: Asset = {
-      id: Date.now().toString(),
-      type: assetType,
-      accountName,
-      balance,
+    const fetchAssets = async () => {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+
+      if (!user) {
+        if (active) setLoading(false);
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from('assets')
+        .select('id, asset_type, account_name, balance, account_number, institution_name, description')
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false });
+
+      if (!active) return;
+
+      if (error) {
+        console.error('[v0] Failed to load assets:', error.message);
+        toast.error('Failed to load your assets');
+      } else {
+        setAssets(data ?? []);
+      }
+      setLoading(false);
     };
 
-    setAssets([...assets, newAsset]);
+    fetchAssets();
+    return () => {
+      active = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const resetForm = () => {
     setAccountName('');
     setBalance('');
+    setInstitutionName('');
+    setAccountNumber('');
+    setAssetType('bank_deposits');
     setShowForm(false);
   };
 
-  const handleDeleteAsset = (id: string) => {
-    setAssets(assets.filter(asset => asset.id !== id));
+  const handleAddAsset = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!accountName || !balance) return;
+
+    const numericBalance = Number(balance.replace(/,/g, ''));
+    if (Number.isNaN(numericBalance) || numericBalance < 0) {
+      toast.error('Enter a valid balance amount');
+      return;
+    }
+
+    setSaving(true);
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    if (!user) {
+      toast.error('You must be signed in to add an asset');
+      setSaving(false);
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from('assets')
+      .insert({
+        user_id: user.id,
+        asset_type: assetType,
+        account_name: accountName,
+        balance: numericBalance,
+        institution_name: institutionName || null,
+        account_number: accountNumber || null,
+      })
+      .select('id, asset_type, account_name, balance, account_number, institution_name, description')
+      .single();
+
+    setSaving(false);
+
+    if (error || !data) {
+      console.error('[v0] Failed to add asset:', error?.message);
+      toast.error('Failed to add asset');
+      return;
+    }
+
+    setAssets((prev) => [data, ...prev]);
+    resetForm();
+    toast.success('Asset added');
+    logActivity('asset_added', `Added ${assetTypeMeta(assetType).label}: ${accountName}`);
   };
 
-  const getAssetIcon = (type: string) => {
-    switch (type) {
-      case 'bank':
-        return '🏦';
-      case 'wallet':
-        return '👛';
-      case 'crypto':
-        return '₿';
-      default:
-        return '💰';
+  const handleDeleteAsset = async (id: string, name: string) => {
+    const { error } = await supabase.from('assets').delete().eq('id', id);
+
+    if (error) {
+      console.error('[v0] Failed to delete asset:', error.message);
+      toast.error('Failed to delete asset');
+      return;
     }
+
+    setAssets((prev) => prev.filter((asset) => asset.id !== id));
+    toast.success('Asset removed');
+    logActivity('asset_removed', `Removed asset: ${name}`);
   };
 
-  const getAssetLabel = (type: string) => {
-    switch (type) {
-      case 'bank':
-        return 'Bank';
-      case 'wallet':
-        return 'Wallet';
-      case 'crypto':
-        return 'Crypto';
-      default:
-        return 'Asset';
-    }
-  };
+  const totalBalance = assets.reduce((sum, asset) => sum + Number(asset.balance), 0);
 
   return (
     <div className="min-h-screen bg-background">
-      {/* Sidebar */}
       <DashboardSidebar isOpen={sidebarOpen} currentPage="assets" />
 
-      {/* Main Content */}
       <main className={`${sidebarOpen ? 'ml-64' : 'ml-0'} transition-all duration-300`}>
-        {/* Header */}
         <header className="bg-primary text-white p-6 shadow-lg">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
               <button
                 onClick={() => setSidebarOpen(!sidebarOpen)}
                 className="p-2 hover:bg-white/20 rounded-lg transition-colors"
+                aria-label="Toggle sidebar"
               >
                 <Menu className="w-6 h-6" />
               </button>
@@ -104,11 +192,11 @@ export default function AssetsPage() {
         </header>
 
         <div className="p-8 max-w-4xl mx-auto">
-          {/* Header */}
           <div className="flex items-center gap-4 mb-8">
             <button
               onClick={() => router.push('/dashboard')}
               className="p-2 hover:bg-muted rounded-lg transition-colors"
+              aria-label="Back to dashboard"
             >
               <ArrowLeft className="w-5 h-5 text-primary" />
             </button>
@@ -118,7 +206,15 @@ export default function AssetsPage() {
             </div>
           </div>
 
-          {/* Add Asset Form */}
+          {!loading && (
+            <Card className="p-4 mb-8 bg-gradient-to-r from-primary/10 to-secondary/10 border border-primary/20">
+              <p className="text-sm text-muted-foreground mb-1">Total Assets Value</p>
+              <h4 className="text-3xl font-bold text-primary">
+                ₹{totalBalance.toLocaleString('en-IN')}
+              </h4>
+            </Card>
+          )}
+
           {!showForm ? (
             <Button
               onClick={() => setShowForm(true)}
@@ -135,12 +231,14 @@ export default function AssetsPage() {
                   <label className="block text-sm font-medium text-foreground mb-2">Asset Type</label>
                   <select
                     value={assetType}
-                    onChange={(e) => setAssetType(e.target.value as 'bank' | 'wallet' | 'crypto')}
+                    onChange={(e) => setAssetType(e.target.value as AssetType)}
                     className="w-full px-4 py-2 border border-input rounded-lg bg-muted text-foreground focus:outline-none focus:ring-2 focus:ring-primary"
                   >
-                    <option value="bank">Bank Account</option>
-                    <option value="wallet">Digital Wallet</option>
-                    <option value="crypto">Cryptocurrency</option>
+                    {ASSET_TYPE_OPTIONS.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.icon} {option.label}
+                      </option>
+                    ))}
                   </select>
                 </div>
 
@@ -156,11 +254,35 @@ export default function AssetsPage() {
                   />
                 </div>
 
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium text-foreground mb-2">Institution (optional)</label>
+                    <Input
+                      type="text"
+                      placeholder="e.g., HDFC Bank"
+                      value={institutionName}
+                      onChange={(e) => setInstitutionName(e.target.value)}
+                      className="bg-muted border-input"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-foreground mb-2">Account Number (optional)</label>
+                    <Input
+                      type="text"
+                      placeholder="e.g., XXXX1234"
+                      value={accountNumber}
+                      onChange={(e) => setAccountNumber(e.target.value)}
+                      className="bg-muted border-input"
+                    />
+                  </div>
+                </div>
+
                 <div>
-                  <label className="block text-sm font-medium text-foreground mb-2">Balance</label>
+                  <label className="block text-sm font-medium text-foreground mb-2">Balance (₹)</label>
                   <Input
                     type="text"
-                    placeholder={assetType === 'crypto' ? 'e.g., 0.5 BTC' : 'e.g., 5,00,000'}
+                    inputMode="decimal"
+                    placeholder="e.g., 500000"
                     value={balance}
                     onChange={(e) => setBalance(e.target.value)}
                     className="bg-muted border-input"
@@ -171,17 +293,14 @@ export default function AssetsPage() {
                 <div className="flex gap-4">
                   <Button
                     type="submit"
+                    disabled={saving}
                     className="flex-1 h-10 bg-gradient-to-r from-secondary to-primary text-white font-medium"
                   >
-                    Save Asset
+                    {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Save Asset'}
                   </Button>
                   <Button
                     type="button"
-                    onClick={() => {
-                      setShowForm(false);
-                      setAccountName('');
-                      setBalance('');
-                    }}
+                    onClick={resetForm}
                     variant="outline"
                     className="flex-1 h-10 border-2 border-primary text-primary hover:bg-primary/10"
                   >
@@ -192,38 +311,50 @@ export default function AssetsPage() {
             </Card>
           )}
 
-          {/* Assets List */}
           <div className="space-y-4">
             <h2 className="text-xl font-bold text-foreground">Your Assets</h2>
-            {assets.length === 0 ? (
+            {loading ? (
+              <div className="text-center py-8">
+                <Loader2 className="w-8 h-8 animate-spin text-primary mx-auto" />
+              </div>
+            ) : assets.length === 0 ? (
               <Card className="p-8 text-center border-2 border-dashed border-muted">
                 <Wallet className="w-12 h-12 text-muted-foreground mx-auto mb-4" />
                 <p className="text-muted-foreground">No assets added yet. Start by adding your first asset.</p>
               </Card>
             ) : (
-              assets.map((asset) => (
-                <Card
-                  key={asset.id}
-                  className="p-6 border-2 border-primary/20 hover:border-primary/40 transition-colors flex items-center justify-between"
-                >
-                  <div className="flex items-center gap-4 flex-1">
-                    <div className="text-3xl">{getAssetIcon(asset.type)}</div>
-                    <div>
-                      <p className="text-sm text-muted-foreground">{getAssetLabel(asset.type)}</p>
-                      <h3 className="text-lg font-semibold text-foreground">{asset.accountName}</h3>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-2xl font-bold text-primary">₹{asset.balance}</p>
-                  </div>
-                  <button
-                    onClick={() => handleDeleteAsset(asset.id)}
-                    className="ml-4 p-2 hover:bg-destructive/10 rounded-lg transition-colors text-destructive"
+              assets.map((asset) => {
+                const meta = assetTypeMeta(asset.asset_type);
+                return (
+                  <Card
+                    key={asset.id}
+                    className="p-6 border-2 border-primary/20 hover:border-primary/40 transition-colors flex items-center justify-between"
                   >
-                    <Trash2 className="w-5 h-5" />
-                  </button>
-                </Card>
-              ))
+                    <div className="flex items-center gap-4 flex-1">
+                      <div className="text-3xl">{meta.icon}</div>
+                      <div>
+                        <p className="text-sm text-muted-foreground">
+                          {meta.label}
+                          {asset.institution_name ? ` · ${asset.institution_name}` : ''}
+                        </p>
+                        <h3 className="text-lg font-semibold text-foreground">{asset.account_name}</h3>
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-2xl font-bold text-primary">
+                        ₹{Number(asset.balance).toLocaleString('en-IN')}
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => handleDeleteAsset(asset.id, asset.account_name)}
+                      className="ml-4 p-2 hover:bg-destructive/10 rounded-lg transition-colors text-destructive"
+                      aria-label={`Delete ${asset.account_name}`}
+                    >
+                      <Trash2 className="w-5 h-5" />
+                    </button>
+                  </Card>
+                );
+              })
             )}
           </div>
         </div>
@@ -232,8 +363,9 @@ export default function AssetsPage() {
       <button
         onClick={() => setSidebarOpen(!sidebarOpen)}
         className="lg:hidden fixed bottom-6 right-6 z-30 p-3 bg-primary text-white rounded-full shadow-lg hover:shadow-xl transition-shadow"
+        aria-label="Toggle sidebar"
       >
-        Menu
+        <Menu className="w-6 h-6" />
       </button>
     </div>
   );
