@@ -1,27 +1,155 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { DashboardSidebar } from '@/components/dashboard/sidebar';
 import { Logo } from '@/components/logo';
-import { Menu, CheckCircle, Clock, Users, Shield, Plus, Settings, Phone, Activity, LogOut } from 'lucide-react';
+import {
+  Menu,
+  CheckCircle,
+  AlertTriangle,
+  Clock,
+  Users,
+  Shield,
+  Plus,
+  Settings,
+  Phone,
+  Activity,
+  Wallet,
+  LogOut,
+} from 'lucide-react';
+import { createClient } from '@/lib/supabase/client';
+import { logActivity } from '@/lib/log-activity';
+import { toast } from 'sonner';
+import { Skeleton } from '@/components/ui/skeleton';
+
+interface DashboardData {
+  fullName: string;
+  isSafe: boolean;
+  lastConfirmedAt: string | null;
+  inactivityThresholdDays: number;
+  totalAssetsValue: number;
+  assetCount: number;
+}
+
+function formatRelativeTime(iso: string | null) {
+  if (!iso) return 'Never';
+  const date = new Date(iso);
+  const diffMs = Date.now() - date.getTime();
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+  if (diffDays <= 0) return 'Today';
+  if (diffDays === 1) return 'Yesterday';
+  if (diffDays < 30) return `${diffDays} days ago`;
+  const diffMonths = Math.floor(diffDays / 30);
+  return `${diffMonths} month${diffMonths > 1 ? 's' : ''} ago`;
+}
+
+function formatCurrency(value: number) {
+  return new Intl.NumberFormat('en-IN', {
+    style: 'currency',
+    currency: 'INR',
+    maximumFractionDigits: 0,
+  }).format(value);
+}
 
 export default function DashboardPage() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
-  const [showModal, setShowModal] = useState(false);
-  const [modalType, setModalType] = useState<'assets' | 'inheritance' | 'emergency' | null>(null);
+  const [data, setData] = useState<DashboardData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [checkingIn, setCheckingIn] = useState(false);
   const router = useRouter();
+  const supabase = createClient();
 
-  const handleLogout = async () => {
-    router.push('/');
+  const loadDashboard = useCallback(async () => {
+    const { data: authData } = await supabase.auth.getUser();
+    const user = authData.user;
+    if (!user) {
+      router.push('/');
+      return;
+    }
+
+    const [userRow, safetyRow, profileRow, assetsRows] = await Promise.all([
+      supabase.from('users').select('full_name').eq('id', user.id).maybeSingle(),
+      supabase
+        .from('safety_status')
+        .select('is_safe, last_confirmed_at')
+        .eq('user_id', user.id)
+        .maybeSingle(),
+      supabase
+        .from('user_profiles')
+        .select('inactivity_threshold_days')
+        .eq('user_id', user.id)
+        .maybeSingle(),
+      supabase.from('assets').select('balance').eq('user_id', user.id),
+    ]);
+
+    const totalAssetsValue = (assetsRows.data ?? []).reduce(
+      (sum, row) => sum + Number(row.balance ?? 0),
+      0
+    );
+
+    setData({
+      fullName: userRow.data?.full_name ?? 'there',
+      isSafe: safetyRow.data?.is_safe ?? true,
+      lastConfirmedAt: safetyRow.data?.last_confirmed_at ?? null,
+      inactivityThresholdDays: profileRow.data?.inactivity_threshold_days ?? 90,
+      totalAssetsValue,
+      assetCount: assetsRows.data?.length ?? 0,
+    });
+    setLoading(false);
+  }, [router, supabase]);
+
+  useEffect(() => {
+    loadDashboard();
+  }, [loadDashboard]);
+
+  const handleCheckIn = async () => {
+    setCheckingIn(true);
+    const { data: authData } = await supabase.auth.getUser();
+    const user = authData.user;
+    if (!user) {
+      setCheckingIn(false);
+      return;
+    }
+
+    const { error } = await supabase
+      .from('safety_status')
+      .update({
+        is_safe: true,
+        last_confirmed_at: new Date().toISOString(),
+        confirmation_type: 'manual',
+      })
+      .eq('user_id', user.id);
+
+    if (error) {
+      toast.error('Could not confirm your status. Please try again.');
+      setCheckingIn(false);
+      return;
+    }
+
+    await logActivity('safety_check_in', 'Confirmed active status from dashboard');
+    toast.success("You're marked as active");
+    await loadDashboard();
+    setCheckingIn(false);
   };
 
-  const openModal = (type: 'assets' | 'inheritance' | 'emergency') => {
-    setModalType(type);
-    setShowModal(true);
-  };
+  if (loading || !data) {
+    return (
+      <div className="min-h-screen bg-background">
+        <DashboardSidebar isOpen={sidebarOpen} currentPage="dashboard" />
+        <main className={`${sidebarOpen ? 'ml-64' : 'ml-0'} transition-all duration-300 p-8`}>
+          <Skeleton className="h-10 w-64 mb-8" />
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            {[1, 2, 3, 4].map((i) => (
+              <Skeleton key={i} className="h-28" />
+            ))}
+          </div>
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background">
@@ -41,7 +169,7 @@ export default function DashboardPage() {
                 <Menu className="w-6 h-6" />
               </button>
               <div>
-                <h1 className="text-2xl font-bold">Account Dashboard</h1>
+                <h1 className="text-2xl font-bold">Welcome, {data.fullName}</h1>
                 <p className="text-white/80 text-sm mt-1">Manage your assets and inheritance protection</p>
               </div>
             </div>
@@ -51,69 +179,78 @@ export default function DashboardPage() {
 
         {/* Content */}
         <div className="p-8 max-w-6xl mx-auto">
-          {/* Welcome Section */}
-          <div className="mb-8">
-            <h1 className="text-4xl font-bold text-primary">Account Dashboard</h1>
-            <p className="text-muted-foreground mt-2">Manage your assets and inheritance protection</p>
-          </div>
-
           {/* Status Cards Row */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-            {/* Status Card */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
             <Card className="p-6 border-2 border-primary/20 hover:border-primary/40 transition-colors">
-              <div className="flex items-start justify-between">
-                <div>
-                  <p className="text-sm text-muted-foreground mb-2">Status</p>
-                  <div className="flex items-center gap-2">
-                    <CheckCircle className="w-5 h-5 text-accent" />
-                    <h3 className="text-2xl font-bold text-primary">Active</h3>
-                  </div>
-                </div>
+              <p className="text-sm text-muted-foreground mb-2">Status</p>
+              <div className="flex items-center gap-2">
+                {data.isSafe ? (
+                  <CheckCircle className="w-5 h-5 text-accent" />
+                ) : (
+                  <AlertTriangle className="w-5 h-5 text-destructive" />
+                )}
+                <h3 className="text-2xl font-bold text-primary">{data.isSafe ? 'Active' : 'Inactive'}</h3>
               </div>
             </Card>
 
-            {/* Last Activity Card */}
             <Card className="p-6 border-2 border-primary/20 hover:border-primary/40 transition-colors">
-              <div>
-                <p className="text-sm text-muted-foreground mb-2">Last Activity</p>
-                <div className="flex items-center gap-2">
-                  <Clock className="w-5 h-5 text-primary" />
-                  <h3 className="text-2xl font-bold text-foreground">Today</h3>
-                </div>
+              <p className="text-sm text-muted-foreground mb-2">Last Activity</p>
+              <div className="flex items-center gap-2">
+                <Clock className="w-5 h-5 text-primary" />
+                <h3 className="text-2xl font-bold text-foreground">
+                  {formatRelativeTime(data.lastConfirmedAt)}
+                </h3>
               </div>
             </Card>
 
-            {/* Inheritance Rule Card */}
             <Card className="p-6 border-2 border-primary/20 hover:border-primary/40 transition-colors">
-              <div>
-                <p className="text-sm text-muted-foreground mb-2">Inheritance Rule</p>
-                <div className="flex items-center gap-2">
-                  <Shield className="w-5 h-5 text-primary" />
-                  <h3 className="text-2xl font-bold text-foreground">30 Days</h3>
-                </div>
+              <p className="text-sm text-muted-foreground mb-2">Inheritance Rule</p>
+              <div className="flex items-center gap-2">
+                <Shield className="w-5 h-5 text-primary" />
+                <h3 className="text-2xl font-bold text-foreground">{data.inactivityThresholdDays} Days</h3>
+              </div>
+            </Card>
+
+            <Card className="p-6 border-2 border-primary/20 hover:border-primary/40 transition-colors">
+              <p className="text-sm text-muted-foreground mb-2">Total Assets</p>
+              <div className="flex items-center gap-2">
+                <Wallet className="w-5 h-5 text-primary" />
+                <h3 className="text-2xl font-bold text-foreground">{formatCurrency(data.totalAssetsValue)}</h3>
               </div>
             </Card>
           </div>
 
           {/* Inheritance Status */}
-          <Card className="p-6 border-2 border-accent/30 bg-accent/5 mb-8">
-            <div className="flex items-center justify-between">
+          <Card
+            className={`p-6 border-2 mb-8 ${
+              data.isSafe ? 'border-accent/30 bg-accent/5' : 'border-destructive/30 bg-destructive/5'
+            }`}
+          >
+            <div className="flex items-center justify-between flex-wrap gap-4">
               <div className="flex items-center gap-4">
-                <CheckCircle className="w-8 h-8 text-accent flex-shrink-0" />
+                {data.isSafe ? (
+                  <CheckCircle className="w-8 h-8 text-accent flex-shrink-0" />
+                ) : (
+                  <AlertTriangle className="w-8 h-8 text-destructive flex-shrink-0" />
+                )}
                 <div>
                   <h3 className="text-lg font-bold text-foreground">Inheritance Status</h3>
-                  <p className="text-muted-foreground text-sm">Your inheritance protection is <span className="font-semibold text-accent">SAFE</span></p>
+                  <p className="text-muted-foreground text-sm">
+                    Your inheritance protection is{' '}
+                    <span className={`font-semibold ${data.isSafe ? 'text-accent' : 'text-destructive'}`}>
+                      {data.isSafe ? 'SAFE' : 'AT RISK'}
+                    </span>
+                  </p>
                 </div>
               </div>
-              <div className="text-right">
-                <p className="text-xs text-muted-foreground">Last checked today</p>
-              </div>
+              <p className="text-xs text-muted-foreground">
+                Last confirmed {formatRelativeTime(data.lastConfirmedAt).toLowerCase()}
+              </p>
             </div>
           </Card>
 
           {/* Action Buttons Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
-            {/* Add / View Assets */}
             <Button
               onClick={() => router.push('/dashboard/assets')}
               className="h-16 bg-gradient-to-r from-secondary to-primary text-white font-semibold text-base hover:shadow-lg transition-shadow flex items-center justify-center gap-2"
@@ -122,7 +259,6 @@ export default function DashboardPage() {
               Add / View Assets
             </Button>
 
-            {/* Set Inheritance Rules */}
             <Button
               onClick={() => router.push('/dashboard/inheritance-rules')}
               className="h-16 bg-gradient-to-r from-secondary to-primary text-white font-semibold text-base hover:shadow-lg transition-shadow flex items-center justify-center gap-2"
@@ -131,24 +267,23 @@ export default function DashboardPage() {
               Set Inheritance Rules
             </Button>
 
-            {/* Emergency Contact */}
             <Button
-              onClick={() => openModal('emergency')}
+              onClick={() => router.push('/dashboard/emergency-contacts')}
               className="h-16 bg-gradient-to-r from-secondary to-primary text-white font-semibold text-base hover:shadow-lg transition-shadow flex items-center justify-center gap-2"
             >
               <Phone className="w-5 h-5" />
               Emergency Contact
             </Button>
 
-            {/* I'm Active - Highlighted Button */}
             <Button
-              className="h-16 bg-accent text-white font-bold text-base hover:shadow-lg transition-shadow flex items-center justify-center gap-2 md:col-span-2 lg:col-span-1"
+              onClick={handleCheckIn}
+              disabled={checkingIn}
+              className="h-16 bg-accent text-white font-bold text-base hover:shadow-lg transition-shadow flex items-center justify-center gap-2 md:col-span-2 lg:col-span-1 disabled:opacity-60"
             >
               <CheckCircle className="w-5 h-5" />
-              I'm Active
+              {checkingIn ? 'Confirming...' : "I'm Active"}
             </Button>
 
-            {/* View Logs */}
             <Button
               onClick={() => router.push('/dashboard/activity-logs')}
               variant="outline"
@@ -167,7 +302,9 @@ export default function DashboardPage() {
             >
               <Plus className="w-8 h-8 text-primary mb-3" />
               <h3 className="text-xl font-bold text-foreground">Assets</h3>
-              <p className="text-sm text-muted-foreground mt-2">View all digital assets</p>
+              <p className="text-sm text-muted-foreground mt-2">
+                {data.assetCount} asset{data.assetCount === 1 ? '' : 's'} on record
+              </p>
             </button>
 
             <button
@@ -196,7 +333,8 @@ export default function DashboardPage() {
               <div>
                 <h4 className="font-bold text-foreground mb-2">Security Notice</h4>
                 <p className="text-sm text-muted-foreground">
-                  Keep your account secure by regularly checking your activity logs, updating your emergency contacts, and confirming your active status monthly.
+                  Keep your account secure by regularly checking your activity logs, updating your emergency
+                  contacts, and confirming your active status monthly.
                 </p>
               </div>
             </div>
