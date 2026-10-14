@@ -1,6 +1,6 @@
 'use client';
 
-import React from "react"
+import type React from 'react';
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
@@ -9,6 +9,25 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card } from '@/components/ui/card';
 import Image from 'next/image';
+import { createClient } from '@/lib/supabase/client';
+
+// Only the credential/existence signal is genericized — naming it would
+// confirm whether an email is registered. Errors the user can act on are
+// passed through, and anything unexpected is reported as such.
+function loginErrorMessage(error: unknown): string {
+  const { code, status } = (error ?? {}) as { code?: string; status?: number };
+
+  if (code === 'email_not_confirmed') {
+    return 'Please confirm your email address — check your inbox for the link.';
+  }
+  if (code === 'over_request_rate_limit' || status === 429) {
+    return 'Too many attempts. Please wait a moment and try again.';
+  }
+  if (code === 'invalid_credentials') {
+    return 'Invalid email or password.';
+  }
+  return 'Something went wrong. Please try again.';
+}
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
@@ -19,42 +38,29 @@ export default function LoginPage() {
 
   const handleLogin = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    setLoading(true);
     setError('');
 
     if (!email || !password) {
       setError('Please enter email and password');
-      setLoading(false);
       return;
     }
 
+    setLoading(true);
+
     try {
-      const res = await fetch('/api/auth/login-direct', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ email, password }),
+      const supabase = createClient();
+      const { error: signInError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
       });
 
-      const data = await res.json();
-
-      if (!res.ok) {
-        setError(data.error || 'Login failed');
-        setLoading(false);
-        return;
-      }
-
-      // Store user data in localStorage for session persistence
-      if (data.user) {
-        localStorage.setItem('user', JSON.stringify(data.user));
-        localStorage.setItem('session', JSON.stringify(data.session));
-      }
+      if (signInError) throw signInError;
 
       router.push('/select-user-type');
-    } catch (err) {
-      console.error('[v0] Login fetch error:', err);
-      setError('Failed to login. Please try again.');
+      router.refresh();
+    } catch (err: unknown) {
+      console.error('[v0] Login error:', err);
+      setError(loginErrorMessage(err));
       setLoading(false);
     }
   };
@@ -85,11 +91,11 @@ export default function LoginPage() {
           <form onSubmit={handleLogin} className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-foreground mb-2">
-                Email / Mobile Number
+                Email Address
               </label>
               <Input
                 type="email"
-                placeholder="Enter your email or mobile"
+                placeholder="Enter your email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 disabled={loading}
@@ -144,7 +150,7 @@ export default function LoginPage() {
 
           {/* Security Notice */}
           <div className="mt-8 pt-6 border-t border-border text-center text-xs text-muted-foreground">
-            <p className="mb-2">🔒 Government-Certified Security</p>
+            <p className="mb-2">Government-Certified Security</p>
             <p>Your financial data is protected with industry-leading encryption.</p>
           </div>
         </div>

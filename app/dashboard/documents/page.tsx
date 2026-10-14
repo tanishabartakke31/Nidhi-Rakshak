@@ -68,7 +68,7 @@ export default function DocumentsPage() {
   return (
     <div className="min-h-screen bg-background">
       {/* Sidebar */}
-      <DashboardSidebar isOpen={sidebarOpen} currentPage="assets" />
+      <DashboardSidebar isOpen={sidebarOpen} currentPage="documents" />
 
       {/* Main Content */}
       <main className={`${sidebarOpen ? 'ml-64' : 'ml-0'} transition-all duration-300`}>

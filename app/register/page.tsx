@@ -1,6 +1,6 @@
 'use client';
 
-import React from "react"
+import type React from 'react';
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card } from '@/components/ui/card';
 import { ArrowLeft } from 'lucide-react';
+import { createClient } from '@/lib/supabase/client';
 
 export default function RegisterPage() {
   const [step, setStep] = useState<'email' | 'details'>('email');
@@ -20,13 +21,14 @@ export default function RegisterPage() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
-  const [role, setRole] = useState('account_holder');
+  const [role, setRole] = useState<'account_holder' | 'nominee'>('account_holder');
+  const [success, setSuccess] = useState(false);
   const router = useRouter();
 
-  const handleProceedToDetails = async (e: React.FormEvent) => {
+  const handleProceedToDetails = (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    
+
     if (!email) {
       setError('Email is required');
       return;
@@ -53,47 +55,64 @@ export default function RegisterPage() {
     }
 
     try {
-      const res = await fetch('/api/auth/register-direct', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      const supabase = createClient();
+      const { error: signUpError } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          emailRedirectTo:
+            process.env.NEXT_PUBLIC_DEV_SUPABASE_REDIRECT_URL ??
+            `${window.location.origin}/auth/callback`,
+          data: {
+            first_name: firstName,
+            last_name: lastName,
+            phone_number: phone || null,
+            role,
+          },
         },
-        body: JSON.stringify({
-          email,
-          password,
-          phone,
-          firstName,
-          lastName,
-          role,
-        }),
       });
 
-      const data = await res.json();
-
-      if (!res.ok) {
-        if (data.code === 'email_exists' || data.error.includes('already exists')) {
-          setError('Account with this email already exists. Please log in instead.');
-          setTimeout(() => {
-            router.push('/');
-          }, 2000);
-          setLoading(false);
-          return;
+      if (signUpError) {
+        if (signUpError.code === 'user_already_exists') {
+          setError('An account with this email already exists. Please log in instead.');
+          setTimeout(() => router.push('/'), 2000);
+        } else if (signUpError.code === 'weak_password') {
+          setError('Password is too weak. Please choose a stronger password.');
+        } else {
+          setError('Failed to create account. Please try again.');
         }
-        
-        setError(data.error || 'Failed to create account');
         setLoading(false);
         return;
       }
 
-      // Success - redirect with delay to show confirmation message
-      setTimeout(() => {
-        router.push('/select-user-type');
-      }, 2000);
+      setSuccess(true);
     } catch (err) {
+      console.error('[v0] Registration error:', err);
       setError('Failed to create account. Please try again.');
       setLoading(false);
     }
   };
+
+  if (success) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary to-primary/80 p-4">
+        <Card className="w-full max-w-md shadow-2xl">
+          <div className="p-8 text-center">
+            <h1 className="text-2xl font-bold text-primary mb-3">Check your email</h1>
+            <p className="text-muted-foreground mb-6">
+              We&apos;ve sent a confirmation link to <span className="font-medium text-foreground">{email}</span>.
+              Click it to activate your account, then log in.
+            </p>
+            <Link href="/">
+              <Button className="w-full h-12 bg-gradient-to-r from-secondary to-primary text-white font-medium">
+                Back to Login
+              </Button>
+            </Link>
+          </div>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary to-primary/80 p-4">
@@ -101,12 +120,14 @@ export default function RegisterPage() {
         <div className="p-8">
           {/* Header */}
           <div className="flex items-center gap-4 mb-8">
-            <Link
-              href="/"
+            <button
+              type="button"
+              onClick={() => (step === 'details' ? setStep('email') : router.push('/'))}
               className="flex items-center justify-center w-10 h-10 rounded-lg hover:bg-muted transition-colors"
+              aria-label="Go back"
             >
               <ArrowLeft className="w-5 h-5 text-primary" />
-            </Link>
+            </button>
             <div>
               <h1 className="text-2xl font-bold text-primary">Create Account</h1>
               <p className="text-xs text-muted-foreground">
@@ -115,7 +136,7 @@ export default function RegisterPage() {
             </div>
           </div>
 
-          {/* Step 1: Email */}
+          {/* Step 1: Email + role */}
           {step === 'email' && (
             <form onSubmit={handleProceedToDetails} className="space-y-4">
               <div>
@@ -127,6 +148,36 @@ export default function RegisterPage() {
                   placeholder="Enter your email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
+                  disabled={loading}
+                  className="bg-muted border-input"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-2">
+                  First Name
+                </label>
+                <Input
+                  type="text"
+                  placeholder="Enter your first name"
+                  value={firstName}
+                  onChange={(e) => setFirstName(e.target.value)}
+                  disabled={loading}
+                  className="bg-muted border-input"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-2">
+                  Last Name
+                </label>
+                <Input
+                  type="text"
+                  placeholder="Enter your last name"
+                  value={lastName}
+                  onChange={(e) => setLastName(e.target.value)}
                   disabled={loading}
                   className="bg-muted border-input"
                   required
@@ -147,6 +198,36 @@ export default function RegisterPage() {
                 />
               </div>
 
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-2">
+                  I am registering as
+                </label>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setRole('account_holder')}
+                    className={`h-11 rounded-md border text-sm font-medium transition-colors ${
+                      role === 'account_holder'
+                        ? 'border-primary bg-primary/10 text-primary'
+                        : 'border-input text-muted-foreground'
+                    }`}
+                  >
+                    Account Holder
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setRole('nominee')}
+                    className={`h-11 rounded-md border text-sm font-medium transition-colors ${
+                      role === 'nominee'
+                        ? 'border-primary bg-primary/10 text-primary'
+                        : 'border-input text-muted-foreground'
+                    }`}
+                  >
+                    Nominee
+                  </button>
+                </div>
+              </div>
+
               {error && (
                 <div className="p-3 bg-destructive/10 border border-destructive/20 rounded-md text-sm text-destructive">
                   {error}
@@ -163,7 +244,7 @@ export default function RegisterPage() {
             </form>
           )}
 
-          {/* Step 2: Details */}
+          {/* Step 2: Password */}
           {step === 'details' && (
             <form onSubmit={handleCreateAccount} className="space-y-4">
               <div>

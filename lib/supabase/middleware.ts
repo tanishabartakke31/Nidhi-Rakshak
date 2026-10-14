@@ -41,14 +41,26 @@ export async function updateSession(request: NextRequest) {
     data: { user },
   } = await supabase.auth.getUser()
 
-  if (
-    // if the user is not logged in and the app path, in this case, /protected, is accessed, redirect to the login page
-    request.nextUrl.pathname.startsWith('/protected') &&
-    !user
-  ) {
-    // no user, potentially respond by redirecting the user to the login page
+  const { pathname } = request.nextUrl
+  const isProtectedPath =
+    pathname.startsWith('/dashboard') ||
+    pathname.startsWith('/nominee-dashboard') ||
+    pathname.startsWith('/select-user-type')
+  const isAuthPagePath = pathname === '/' || pathname.startsWith('/register')
+
+  if (isProtectedPath && !user) {
+    // No session — send them to the login page instead of letting the
+    // route render with no data (which previously silently fell back to
+    // hardcoded mock state).
     const url = request.nextUrl.clone()
-    url.pathname = '/auth/login'
+    url.pathname = '/'
+    return NextResponse.redirect(url)
+  }
+
+  if (isAuthPagePath && user) {
+    // Already signed in — skip the login/register screens.
+    const url = request.nextUrl.clone()
+    url.pathname = '/select-user-type'
     return NextResponse.redirect(url)
   }
 

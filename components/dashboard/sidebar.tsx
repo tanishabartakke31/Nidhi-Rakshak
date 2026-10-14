@@ -2,21 +2,40 @@
 
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
-import { LogOut, User } from 'lucide-react';
+import { LogOut } from 'lucide-react';
+import { createClient } from '@/lib/supabase/client';
 
 interface SidebarProps {
   isOpen: boolean;
-  currentPage: 'dashboard' | 'assets' | 'emergency-contacts' | 'activity-logs' | 'inheritance-rules';
+  currentPage:
+    | 'dashboard'
+    | 'assets'
+    | 'emergency-contacts'
+    | 'activity-logs'
+    | 'inheritance-rules'
+    | 'account-info'
+    | 'documents'
+    | 'inactivity-settings';
 }
 
 export function DashboardSidebar({ isOpen, currentPage }: SidebarProps) {
   const router = useRouter();
 
+  const handleLogout = async () => {
+    const supabase = createClient();
+    await supabase.auth.signOut();
+    router.push('/');
+    router.refresh();
+  };
+
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', path: '/dashboard' },
+    { id: 'account-info', label: 'Account Info', path: '/dashboard/account-info' },
     { id: 'assets', label: 'Assets', path: '/dashboard/assets' },
+    { id: 'documents', label: 'Documents', path: '/dashboard/documents' },
     { id: 'inheritance-rules', label: 'Inheritance Rules', path: '/dashboard/inheritance-rules' },
     { id: 'emergency-contacts', label: 'Emergency Contacts', path: '/dashboard/emergency-contacts' },
+    { id: 'inactivity-settings', label: 'Inactivity Settings', path: '/dashboard/inactivity-settings' },
     { id: 'activity-logs', label: 'Activity Logs', path: '/dashboard/activity-logs' },
   ];
 
@@ -57,14 +76,7 @@ export function DashboardSidebar({ isOpen, currentPage }: SidebarProps) {
 
       <div className="absolute bottom-6 left-4 right-4 space-y-2">
         <Button
-          onClick={() => router.push('/nominee-dashboard')}
-          className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-secondary to-primary text-white hover:shadow-lg transition-shadow"
-        >
-          <User className="w-4 h-4" />
-          View as Nominee
-        </Button>
-        <Button
-          onClick={() => router.push('/')}
+          onClick={handleLogout}
           variant="outline"
           className="w-full flex items-center justify-center gap-2 bg-transparent border-sidebar-border text-sidebar-foreground hover:bg-sidebar-accent/20"
         >
