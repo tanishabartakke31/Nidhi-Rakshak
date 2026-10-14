@@ -61,7 +61,7 @@ export function DashboardSidebar({ isOpen, currentPage }: SidebarProps) {
           className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-secondary to-primary text-white hover:shadow-lg transition-shadow"
         >
           <User className="w-4 h-4" />
-          View as Nominee
+          Switch to Nominee
         </Button>
         <Button
           onClick={() => router.push('/')}
